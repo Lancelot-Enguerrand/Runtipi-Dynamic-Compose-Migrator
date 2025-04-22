@@ -18,8 +18,9 @@ python migrator.py path/to/runtipi-appstore
 ```
 > This will create docker-compose.json for for all apps missing one
 
-### Known issues
+### Known issues / limitations
  - If an environment variable value contains an "=" the content will be truncated.
+ - Labels are ignored if you have specific need you will need to use `extraLabels`.
 
 ### Disclaimer
 This is not a well written script but it has been functionnal so far.
