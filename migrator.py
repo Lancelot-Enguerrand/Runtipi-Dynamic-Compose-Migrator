@@ -1,5 +1,8 @@
+# Usage: python migrator.py appstore_repo_path
+
 import yaml
 import json
+import sys
 import os
 
 def handle_deploy_section(deploy):
@@ -42,7 +45,6 @@ def handle_deploy_section(deploy):
                         device_dict["options"] = options
                     
                     result["resources"]["reservations"]["devices"].append(device_dict)
-
     return result
 
 def handle_healthcheck(healthcheck):
@@ -62,22 +64,23 @@ def handle_healthcheck(healthcheck):
 
     # Handle test conversion
     test = healthcheck.get("test")
+    # Format : List
     if isinstance(test, list) and len(test) > 0: 
-        # Remove the first element if it starts with "CMD" or "CMD-SHELL"
-        if test[0].upper() in ["CMD", "CMD-SHELL"]:
+        # Remove "CMD" or "CMD-SHELL"
+        if test[0].upper() in ["CMD", "CMD-SHELL"]: # Remove "CMD" or "CMD-SHELL"
             test = test[1:]
         # Join the remaining elements into a single string
         result["test"] = " ".join(test)
+    # Format : String
     elif isinstance(test, str):
-        # Remove "CMD " or "CMD-SHELL " prefix from a single string
-        if test.upper().startswith("CMD "):
+        if test.upper().startswith("CMD "): # Remove "CMD"
             result["test"] = test[4:].strip()
-        elif test.upper().startswith("CMD-SHELL "):
+        elif test.upper().startswith("CMD-SHELL "): # Remove "CMD-SHELL"
             result["test"] = test[10:].strip()
         else:
             result["test"] = test.strip()
     else:
-        result["test"] = None  # Set to None if no valid test is provided
+        result["test"] = None
 
     return result
 
@@ -88,41 +91,6 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
 
     # Create services array
     services = []
-    
-    # Track handled sections
-    handled_sections = {
-        'image',
-        'ports',
-        'environment',
-        'depends_on', 'volumes',
-        'healthcheck',
-        'command',
-        'network_mode','network-mode',
-        'extra_hosts',
-        'hostname',
-        'user',
-        'labels',
-        'privileged',
-        'stop_grace_period',
-        'entrypoint',
-        'ulimits', 
-        'expose',
-        'working_dir',
-        'stdin_open',
-        'pid',
-        'cap_add', 'cap_drop',
-        'sysctls', 
-        'devices', 
-        'logging',    
-        'shm_size',
-        'tty',
-        'stop_signal',
-        'security_opt',
-        'deploy',
-        'read_only'
-        }
-    not_handled_sections = {}
-    ignored_sections = {'restart', 'build', 'dns', 'networks', 'container_name', 'env_file', 'links'}
     
     for service_name, service_details in yaml_data.get('services', {}).items():
         # image and name
@@ -143,7 +111,7 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
 
         for port in ports:
             # Split port definition to extract interface, hostPort, containerPort, and protocol
-            parts = port.rsplit(":", 2)  # Ensure that only the last two colons are split (for host and container ports)
+            parts = port.rsplit(":", 2)  # Ensure that only the last two colons are split
             protocol = None
             container_port = None
 
@@ -204,26 +172,11 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
         user = service_details.get("user")
         if user:
             service["user"] = user
-
-        # Restart
-        #restart = service_details.get("restart")
-        #if restart:
-        #    service["restart"] = restart
         
         # PID
         pid = service_details.get("pid")
         if pid:
             service["pid"] = pid
-        
-        # DNS
-        #dns = service_details.get("dns")
-        #if dns:
-        #    service["dns"] = dns
-
-        # Expose
-        expose = service_details.get("expose")
-        if expose:
-            service["expose"] = expose
 
         # Network Mode
         network_mode = service_details.get("network_mode")
@@ -238,20 +191,15 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
         environment = service_details.get("environment", {})
         if environment:
             if isinstance(environment, list):
-                # Handle list format: "KEY=VALUE"
+                # Format: "KEY=VALUE"
                 service["environment"] = {
                     env.split('=')[0]: env.split('=')[1] for env in environment if '=' in env
                 }
             elif isinstance(environment, dict):
-                # Handle dict format: "KEY: VALUE"
+                # Format: "KEY: VALUE"
                 service["environment"] = environment
-        
-        # Links
-        #links = service_details.get("links")
-        #if links:
-        #    service["links"] = links
 
-        # Depends on (can be dict or list)
+        # Depends on
         depends_on = service_details.get("depends_on")
         if depends_on:
             if isinstance(depends_on, dict):
@@ -314,7 +262,7 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
         if stdin_open:
             service["stdinOpen"] = stdin_open
         
-        # Deploy - handled with modular function
+        # Deploy
         deploy = service_details.get("deploy")
         if deploy:
             service["deploy"] = handle_deploy_section(deploy)
@@ -363,13 +311,13 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
             service["ulimits"] = {}
             for limit_name, limit_values in ulimits.items():
                 if isinstance(limit_values, dict):
-                    # Case where soft and hard are provided separately
+                    # When soft and hard are provided separately
                     service["ulimits"][limit_name] = {
                         "soft": limit_values.get("soft"),
                         "hard": limit_values.get("hard")
                     }
                 else:
-                    # Case where a single value is provided
+                    # When a single value is provided
                     service["ulimits"][limit_name] = limit_values
 
         # Stop grace period
@@ -387,14 +335,8 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
         filtered_labels = {key: value for key, value in labels.items() if not key.startswith("traefik") and not key.startswith("runtipi")}
         if filtered_labels:
             service["labels"] = filtered_labels
-            
+    
         services.append(service)
-
-        # Track unhandled sections
-        unhandled_sections = set(service_details.keys()) - handled_sections - set(ignored_sections)
-        if unhandled_sections:
-            print(f"Warning: Unhandled sections in service '{service_name}': {', '.join(unhandled_sections)}")
-            break
 
     # Create JSON data
     json_data = {"$schema": "../dynamic-compose-schema.json", "services": services}
@@ -404,33 +346,39 @@ def migrate_docker_compose(yaml_file_path, json_file_path, app_name):
         json.dump(json_data, json_file, indent=2)   
         json_file.write('\n')  # Add empty line
 
-    #print(f"Migration done. JSON file : '{json_file_path}'.")
+    print(f"App migrated : '{json_file_path}'.")
 
 def migrate_all_applications(applications_dir, on_existing_json='ignore'):
-    # Parcourir tous les dossiers dans le répertoire des applications
+    # List all directories
     for app_folder in os.listdir(applications_dir):
         app_path = os.path.join(applications_dir, app_folder)
 
-        # Vérifier que c'est bien un dossier
+        # Check directories and set YAML and JSON paths
         if os.path.isdir(app_path):
             yaml_file_path = os.path.join(app_path, 'docker-compose.yml')
             json_file_path = os.path.join(app_path, 'docker-compose.json')
 
-            # Vérifier si le fichier YAML existe dans le dossier
+            # Check if YAML exists
             if os.path.exists(yaml_file_path):
-                # Gérer le cas où le fichier JSON existe déjà
+                # If JSON already exist
                 if os.path.exists(json_file_path):
-                    if on_existing_json == 'ignore':
+                    if on_existing_json == 'new':
+                        json_file_path = os.path.join(app_path, 'docker-compose.json.new')
+                    else:
                         print(f"Skipping migration for {app_folder} because JSON file already exists.")
                         continue
-                    elif on_existing_json == 'new_extension':
-                        json_file_path = os.path.join(app_path, 'docker-compose.json.new')
                 
-                #print(f"Migrating {app_folder}...")
-                # Appeler la fonction de migration avec le nom de l'application
+                # Migrate app
                 migrate_docker_compose(yaml_file_path, json_file_path, app_folder)
             else:
                 print(f"Warning: No docker-compose.yml found in {app_folder}. Skipping.")
 
-applications_directory = '.'  # Replace if necessary
+# Check arguments
+if len(sys.argv) != 2:
+    print("No path provided, will consider being in appstore root directory")
+    applications_directory = 'apps'
+else:
+    appstore_path = sys.argv[1]
+    applications_directory = os.path.join(appstore_path, 'apps')
+
 migrate_all_applications(applications_directory, on_existing_json='ignore')
